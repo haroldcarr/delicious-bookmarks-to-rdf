@@ -2,4 +2,8 @@ Transforms [[delicious.com]] bookmarks into RDF triples.
 
 In progress.
 
-Currently it parses and write RDF.  But the RDF is not namespaced yet.
+Currently it parses and writes RDF.
+
+Current limitations:
+- Only uses one fake namespace.
+- Writes out unicode as escaped - which fuseki will not read.

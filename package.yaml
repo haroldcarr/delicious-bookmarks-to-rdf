@@ -6,6 +6,7 @@ dependencies:
 - base
 - classy-prelude
 - parsec
+- split
 
 executables:
   executable:

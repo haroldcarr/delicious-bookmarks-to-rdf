@@ -9,9 +9,10 @@ module Lib where
 deliciousToRdf "test/test-data/delicious-2017-07-14.html" "/tmp/delicious-2017-07-14.ttl"
 -}
 
-import           ClassyPrelude as CP hiding (many, try, (<|>))
-import           System.IO     as IO (IOMode (WriteMode), hPutStr, hPutStrLn,
-                                      readFile, withFile)
+import           ClassyPrelude   as CP hiding (many, try, (<|>))
+import           Data.List.Split (splitOn)
+import           System.IO       as IO (IOMode (WriteMode), hPutStr, hPutStrLn,
+                                        readFile, withFile)
 import           Text.Parsec
 
 ------------------------------------------------------------------------------
@@ -28,7 +29,7 @@ data Bookmark
   { href    :: String
   , addDate :: String
   , private :: String
-  , tags    :: String
+  , tags    :: [String]
   , title   :: String
   , notes   :: String
   }
@@ -37,24 +38,35 @@ data Bookmark
 ------------------------------------------------------------------------------
 -- write RDF
 
+hc :: String
+hc = "@prefix hc: <http://openhc.org/syntax-ns#> ."
+
 writeRdf :: FilePath -> [Bookmark] -> IO ()
 writeRdf o bs =
-  withFile o WriteMode $ \h ->
+  withFile o WriteMode $ \h -> do
+    hPutStrLn h hc
     forM_ bs $ writeBookmark h
 
 writeBookmark :: Handle -> Bookmark -> IO ()
 writeBookmark h b = do
   hPutStrLn h ""
   hPutStr h "<"; hPutStr h (href b); hPutStrLn h ">"
-  writeProperty h "addDate" (addDate b) ";"
-  writeProperty h "private" (private b) ";"
-  writeProperty h "tags" (tags b) ";"
+  writeProperty h "hc:addDate" (addDate b) ";"
+  writeProperty h "hc:private" (private b) ";"
+  writeTags h (tags b)
   if notes b == "" then
-      writeProperty h "title" (show (title b)) "."
+      writeProperty h "hc:title" (show (title b)) "."
   else do
-      writeProperty h "title" (show (title b)) ";"
-      writeProperty h "notes" (show (notes b)) "."
+      writeProperty h "hc:title" (show (title b)) ";"
+      writeProperty h "hc:notes" (show (notes b)) "."
   return ()
+
+-- some of my delicious files has "tag,,tag" - clean that up
+writeTags :: Handle -> [String] -> IO ()
+writeTags h ts =
+  forM_ ts $ \t ->
+    when (t /= "")
+      (writeProperty h "hc:tag" (show t) ";")
 
 writeProperty :: Handle -> String -> String -> String -> IO ()
 writeProperty h p v sep = do
@@ -97,12 +109,13 @@ bookmark = do
   spaces
   void $ string "TAGS=\""
   t <- stringContents
+  let ts = splitOn "," t
   spaces
   void $ char '>'
   ti <- manyTill anyChar (try (string "</A>"))
   spaces
   n <- bookmarkNote <|> return ""
-  return $ Bookmark h a p t ti n
+  return $ Bookmark h a p ts ti n
 
 bookmarkNote :: Parser String
 bookmarkNote = do
