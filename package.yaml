@@ -1,0 +1,31 @@
+name:    delicious-bookmarks-to-rdf
+version: "0.1.0"
+license: BSD3
+
+dependencies:
+- base
+- classy-prelude
+- parsec
+
+executables:
+  executable:
+    main: Main.hs
+    source-dirs: app
+    dependencies:
+    - delicious-bookmarks-to-rdf
+
+library:
+  source-dirs: src
+  ghc-options:
+  - -Wall
+  - -fwarn-tabs
+  - -O2
+
+tests:
+  test:
+    main: Spec.hs
+    source-dirs: test
+    ghc-options: -Wall
+    dependencies:
+    - delicious-bookmarks-to-rdf
+    - hspec

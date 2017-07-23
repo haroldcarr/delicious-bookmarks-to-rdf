@@ -1,0 +1,5 @@
+Transforms [[delicious.com]] bookmarks into RDF triples.
+
+In progress.
+
+Currently it parses.   Next: generate triples.
