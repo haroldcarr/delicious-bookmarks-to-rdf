@@ -4,5 +4,5 @@ import           Lib
 
 main :: IO ()
 main = do
-  _ <- top "foo"
+  _ <- deliciousToRdf "foo" "bar"
   return ()

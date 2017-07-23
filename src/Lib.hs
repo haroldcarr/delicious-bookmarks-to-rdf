@@ -1,11 +1,27 @@
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 module Lib where
 
 -- does not handle multi-line notes in <DD>
 
-import           ClassyPrelude (void)
+{-
+deliciousToRdf "test/test-data/delicious-2017-07-14.html" "/tmp/delicious-2017-07-14.ttl"
+-}
+
+import           ClassyPrelude as CP hiding (many, try, (<|>))
+import           System.IO     as IO (IOMode (WriteMode), hPutStr, hPutStrLn,
+                                      readFile, withFile)
 import           Text.Parsec
 
-type Parser = Parsec String ()
+------------------------------------------------------------------------------
+
+deliciousToRdf :: FilePath -> FilePath -> IO ()
+deliciousToRdf i o = do
+  p <- parseDelicious i
+  either (error . show) (writeRdf o) p
+
+------------------------------------------------------------------------------
 
 data Bookmark
   = Bookmark
@@ -18,13 +34,50 @@ data Bookmark
   }
   deriving (Show)
 
-top :: String -> IO (Either ParseError [Bookmark])
-top = parseFromFile delicious
+------------------------------------------------------------------------------
+-- write RDF
+
+writeRdf :: FilePath -> [Bookmark] -> IO ()
+writeRdf o bs =
+  withFile o WriteMode $ \h ->
+    forM_ bs $ writeBookmark h
+
+writeBookmark :: Handle -> Bookmark -> IO ()
+writeBookmark h b = do
+  hPutStrLn h ""
+  hPutStr h "<"; hPutStr h (href b); hPutStrLn h ">"
+  writeProperty h "addDate" (addDate b) ";"
+  writeProperty h "private" (private b) ";"
+  writeProperty h "tags" (tags b) ";"
+  if notes b == "" then
+      writeProperty h "title" (show (title b)) "."
+  else do
+      writeProperty h "title" (show (title b)) ";"
+      writeProperty h "notes" (show (notes b)) "."
+  return ()
+
+writeProperty :: Handle -> String -> String -> String -> IO ()
+writeProperty h p v sep = do
+  hPutStr h "    "
+  hPutStr h p
+  hPutStr h " "
+  hPutStr h v
+  hPutStr h " "
+  hPutStrLn h sep
+
+
+------------------------------------------------------------------------------
+-- parse delicious
+
+type Parser = Parsec String ()
+
+parseDelicious :: FilePath -> IO (Either ParseError [Bookmark])
+parseDelicious = parseFromFile delicious
 
 parseFromFile :: Parser a -> FilePath -> IO (Either ParseError a)
 parseFromFile p fname = do
-  input <- readFile fname
-  return (runParser p () fname input)
+  i <- IO.readFile fname
+  return (runParser p () fname i)
 
 delicious :: Parser [Bookmark]
 delicious = do

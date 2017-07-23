@@ -2,4 +2,4 @@ Transforms [[delicious.com]] bookmarks into RDF triples.
 
 In progress.
 
-Currently it parses.   Next: generate triples.
+Currently it parses and write RDF.  But the RDF is not namespaced yet.
