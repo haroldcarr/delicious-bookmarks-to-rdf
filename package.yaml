@@ -4,9 +4,10 @@ license: BSD3
 
 dependencies:
 - base
+- bytestring
 - classy-prelude
 - parsec
-- split
+- text
 
 executables:
   executable:
