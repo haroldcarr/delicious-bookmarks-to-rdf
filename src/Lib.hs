@@ -13,8 +13,12 @@ deliciousToRdf "test/test-data/delicious-2017-07-14.html" "/tmp/delicious-2017-0
 import           ClassyPrelude         as CP hiding (many, try, (<|>))
 import           Data.ByteString       as BS hiding (hPutStrLn)
 import           Data.ByteString.Char8 as BS (hPutStrLn)
-import           Data.Text             as T (pack, replace, splitOn, strip)
+import           Data.Text             as T (pack, replace, splitOn, strip,
+                                             unpack)
 import           Data.Text.Encoding    as T (decodeUtf8, encodeUtf8)
+import           Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import           Data.Time.Format      as F (defaultTimeLocale, formatTime)
+import qualified Prelude               as P (read)
 import           System.IO             as IO (IOMode (WriteMode), withFile)
 import           Text.Parsec
 
@@ -58,22 +62,110 @@ writeBookmark h b = do
   writeProperty h "hc:private" (private b) ";"
   writeTags h (tags b)
   if notes b == "" then
-      writeProperty h "hc:title" (lintTitle (title b)) "."
+      writeProperty h "hc:title" (title b) "."
   else do
-      writeProperty h "hc:title" (lintTitle (title b)) ";"
+      writeProperty h "hc:title" (title b) ";"
       writeProperty h "hc:notes" (notes b) "."
   return ()
-
--- some titles have " (meaning inches) in them
-lintTitle :: Text -> Text
-lintTitle = T.replace "\"" ""
 
 -- some of my delicious files has "tag,,tag" - clean that up
 writeTags :: Handle -> [Text] -> IO ()
 writeTags h ts =
   forM_ ts $ \t ->
     when (t /= "")
-      (writeProperty h "hc:tag" (lintTag t) ";")
+      (writeProperty h "hc:tag" t ";")
+
+writeProperty :: Handle -> Text -> Text -> Text -> IO ()
+writeProperty h p v sep = do
+  hPutStr h "    "
+  hPutStr h (T.encodeUtf8 p)
+  hPutStr h " "
+  hPutStr h "\""; hPutStr h (T.encodeUtf8 v); hPutStr h "\""
+  hPutStr h " "
+  BS.hPutStrLn h (T.encodeUtf8 sep)
+
+------------------------------------------------------------------------------
+-- parse delicious
+
+type Parser = Parsec Text ()
+
+parseDelicious :: FilePath -> IO (Either ParseError [Bookmark])
+parseDelicious = parseFromFile delicious
+
+parseFromFile :: Parser a -> FilePath -> IO (Either ParseError a)
+parseFromFile p fname = do
+  i <- BS.readFile fname
+  return (runParser p () fname (T.decodeUtf8 i))
+
+delicious :: Parser [Bookmark]
+delicious = do
+  delHeader
+  manyTill bookmark (try $ string "</DL><p>" >> theEnd)
+
+bookmark :: Parser Bookmark
+bookmark = do
+  void $ string "<DT><A HREF=\""
+  h <- stringContents
+  spaces
+  void $ string "ADD_DATE=\""
+  a <- stringContents
+  spaces
+  void $ string "PRIVATE=\""
+  p <- stringContents
+  spaces
+  void $ string "TAGS=\""
+  t <- stringContents
+  let ts = CP.map lintTag $ splitOn "," t
+  spaces
+  void $ char '>'
+  ti <- manyTill anyChar (try (string "</A>"))
+  spaces
+  n <- bookmarkNote <|> return ""
+  return $ Bookmark h (doTime a) p ts (lintTitle (T.pack ti)) n
+
+doTime :: Text -> Text
+doTime x = T.pack $ formatTime F.defaultTimeLocale  "%F %T %Z"
+                  $ posixSecondsToUTCTime
+                  $ realToFrac
+                    (P.read (T.unpack x) :: Int)
+
+bookmarkNote :: Parser Text
+bookmarkNote = do
+  void $ try (string "<DD>")
+  fmap T.pack (manyTill anyChar endOfLine)
+
+stringContents :: Parser Text
+stringContents =
+  fmap T.pack (manyTill anyChar (try (char '"')))
+
+delHeader :: Parser ()
+delHeader = do
+  void $ string "<!DOCTYPE NETSCAPE-Bookmark-file-1>"
+  void   endOfLine
+  void $ string "<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">"
+  void   endOfLine
+  void $ string "<!-- This is an automatically generated file."
+  void   endOfLine
+  void $ string "It will be read and overwritten."
+  void   endOfLine
+  void $ string "Do Not Edit! -->"
+  void   endOfLine
+  void $ string "<TITLE>Bookmarks</TITLE>"
+  void   endOfLine
+  void $ string "<H1>Bookmarks</H1>"
+  void   endOfLine
+  void $ string "<DL><p>"
+  void   endOfLine
+
+theEnd :: Parser Text
+theEnd = do
+  void $ many anyChar
+  eof
+  return ""
+
+-- some titles have " (meaning inches) in them
+lintTitle :: Text -> Text
+lintTitle = T.replace "\"" ""
 
 lintTag :: Text -> Text
 lintTag t =
@@ -245,85 +337,3 @@ lintTag t =
     "vpn"           -> "VPN"
     "zotero"        -> "Zotero"
     x               -> x
-
-writeProperty :: Handle -> Text -> Text -> Text -> IO ()
-writeProperty h p v sep = do
-  hPutStr h "    "
-  hPutStr h (T.encodeUtf8 p)
-  hPutStr h " "
-  hPutStr h "\""; hPutStr h (T.encodeUtf8 v); hPutStr h "\""
-  hPutStr h " "
-  BS.hPutStrLn h (T.encodeUtf8 sep)
-
-------------------------------------------------------------------------------
--- parse delicious
-
-type Parser = Parsec Text ()
-
-parseDelicious :: FilePath -> IO (Either ParseError [Bookmark])
-parseDelicious = parseFromFile delicious
-
-parseFromFile :: Parser a -> FilePath -> IO (Either ParseError a)
-parseFromFile p fname = do
-  i <- BS.readFile fname
-  return (runParser p () fname (T.decodeUtf8 i))
-
-delicious :: Parser [Bookmark]
-delicious = do
-  delHeader
-  manyTill bookmark (try $ string "</DL><p>" >> theEnd)
-
-bookmark :: Parser Bookmark
-bookmark = do
-  void $ string "<DT><A HREF=\""
-  h <- stringContents
-  spaces
-  void $ string "ADD_DATE=\""
-  a <- stringContents
-  spaces
-  void $ string "PRIVATE=\""
-  p <- stringContents
-  spaces
-  void $ string "TAGS=\""
-  t <- stringContents
-  let ts = splitOn "," t
-  spaces
-  void $ char '>'
-  ti <- manyTill anyChar (try (string "</A>"))
-  spaces
-  n <- bookmarkNote <|> return ""
-  return $ Bookmark h a p ts (T.pack ti) n
-
-bookmarkNote :: Parser Text
-bookmarkNote = do
-  void $ try (string "<DD>")
-  fmap T.pack (manyTill anyChar endOfLine)
-
-stringContents :: Parser Text
-stringContents =
-  fmap T.pack (manyTill anyChar (try (char '"')))
-
-delHeader :: Parser ()
-delHeader = do
-  void $ string "<!DOCTYPE NETSCAPE-Bookmark-file-1>"
-  void   endOfLine
-  void $ string "<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">"
-  void   endOfLine
-  void $ string "<!-- This is an automatically generated file."
-  void   endOfLine
-  void $ string "It will be read and overwritten."
-  void   endOfLine
-  void $ string "Do Not Edit! -->"
-  void   endOfLine
-  void $ string "<TITLE>Bookmarks</TITLE>"
-  void   endOfLine
-  void $ string "<H1>Bookmarks</H1>"
-  void   endOfLine
-  void $ string "<DL><p>"
-  void   endOfLine
-
-theEnd :: Parser Text
-theEnd = do
-  void $ many anyChar
-  eof
-  return ""

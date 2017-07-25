@@ -1,8 +1,11 @@
 module Main where
 
 import           Lib
+import           System.Environment (getArgs)
 
 main :: IO ()
 main = do
-  _ <- deliciousToRdf "foo" "bar"
-  return ()
+  io <- getArgs
+  case io of
+    [i,o] -> deliciousToRdf i o
+    _     -> error "Usage: deliciousBookmarksToRdf <in-file> <out-file>"

@@ -8,9 +8,10 @@ dependencies:
 - classy-prelude
 - parsec
 - text
+- time
 
 executables:
-  executable:
+  delicious-bookmarks-to-rdf:
     main: Main.hs
     source-dirs: app
     dependencies:
