@@ -7,5 +7,5 @@ main :: IO ()
 main = do
   io <- getArgs
   case io of
-    [i,o] -> deliciousToRdf i o
+    [i,o] -> hcDeliciousToRdf i o
     _     -> error "Usage: deliciousBookmarksToRdf <in-file> <out-file>"

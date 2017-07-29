@@ -1,5 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module Lib where
 
@@ -24,10 +25,11 @@ import           Text.Parsec
 
 ------------------------------------------------------------------------------
 
-deliciousToRdf :: FilePath -> FilePath -> IO ()
-deliciousToRdf i o = do
+deliciousToRdf :: ([Bookmark] -> [Bookmark]) -> FilePath -> FilePath -> IO ()
+deliciousToRdf filterBookmarks i o = do
   p <- parseDelicious i
-  either (error . show) (writeRdf o) p
+  let bs = either (error . show) filterBookmarks p
+  writeRdf o bs
 
 ------------------------------------------------------------------------------
 
@@ -41,50 +43,6 @@ data Bookmark
   , notes   :: Text
   }
   deriving (Show)
-
-------------------------------------------------------------------------------
--- write RDF
-
-hc :: Text
-hc = "@prefix hc: <http://openhc.org/syntax-ns#> ."
-
-writeRdf :: FilePath -> [Bookmark] -> IO ()
-writeRdf o bs =
-  withFile o WriteMode $ \h -> do
-    BS.hPutStrLn h (T.encodeUtf8 hc)
-    forM_ bs $ writeBookmark h
-
-writeBookmark :: Handle -> Bookmark -> IO ()
-writeBookmark h b = do
-  BS.hPutStrLn h ""
-  hPutStr h "<"; hPutStr h (T.encodeUtf8 (href b)); BS.hPutStrLn h ">"
-  writePropertyAndValue h "hc:addDate" (addDate b) ";" True
-  writePropertyAndValue h "hc:private" (private b) ";" False
-  writeTags h (tags b)
-  if notes b == "" then
-      writePropertyAndValue h "hc:title" (title b) "." True
-  else do
-      writePropertyAndValue h "hc:title" (title b) ";" True
-      writePropertyAndValue h "hc:notes" (notes b) "." True
-  return ()
-
--- some of my delicious files has "tag,,tag" - clean that up
-writeTags :: Handle -> [Text] -> IO ()
-writeTags h ts =
-  forM_ ts $ \t ->
-    when (t /= "")
-      (writePropertyAndValue h "hc:tag" t ";" True)
-
-writePropertyAndValue :: Handle -> Text -> Text -> Text -> Bool -> IO ()
-writePropertyAndValue h p v sep b = do
-  hPutStr h "    "
-  hPutStr h (T.encodeUtf8 p)
-  hPutStr h " "
-  when b $ hPutStr h "\"";
-  hPutStr h (T.encodeUtf8 v);
-  when b $ hPutStr h "\""
-  hPutStr h " "
-  BS.hPutStrLn h (T.encodeUtf8 sep)
 
 ------------------------------------------------------------------------------
 -- parse delicious
@@ -118,19 +76,13 @@ bookmark = do
   spaces
   void $ string "TAGS=\""
   tags0 <- stringContents
-  let tags' = CP.map lintTag $ splitOn "," tags0
+  let tags' = CP.filter (/="") $ CP.map strip (splitOn "," tags0) -- get rid of empty tags
   spaces
   void $ char '>'
   title0 <- manyTill anyChar (try (string "</A>"))
   spaces
   n <- bookmarkNote <|> return ""
-  return $ Bookmark href0 (doTime addDate0) private' tags' (lintTitle (T.pack title0)) n
-
-doTime :: Text -> Text
-doTime x = T.pack $ formatTime F.defaultTimeLocale  "%F %T %Z"
-                  $ posixSecondsToUTCTime
-                  $ realToFrac
-                    (P.read (T.unpack x) :: Int)
+  return $ Bookmark href0 addDate0 private' tags' (T.pack title0) n
 
 bookmarkNote :: Parser Text
 bookmarkNote = do
@@ -166,15 +118,87 @@ theEnd = do
   eof
   return ""
 
--- some titles have " (meaning inches) in them
-lintTitle :: Text -> Text
-lintTitle = T.replace "\"" ""
+------------------------------------------------------------------------------
+-- write RDF
 
-lintTag :: Text -> Text
-lintTag t =
-  case T.strip t of
+hc :: Text
+hc = "@prefix hc: <http://openhc.org/syntax-ns#> ."
+
+xsd :: Text
+xsd = "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> ."
+
+writeRdf :: FilePath -> [Bookmark] -> IO ()
+writeRdf o bs =
+  withFile o WriteMode $ \h -> do
+    BS.hPutStrLn h (T.encodeUtf8 hc)
+    BS.hPutStrLn h (T.encodeUtf8 xsd)
+    forM_ bs $ writeBookmark h
+
+writeBookmark :: Handle -> Bookmark -> IO ()
+writeBookmark h b = do
+  BS.hPutStrLn h ""
+  hPutStr h "<"; hPutStr h (T.encodeUtf8 (href b)); BS.hPutStrLn h ">"
+  writePropertyAndValue h "hc:addDate" (addDate b) ";" False -- NOTE: True/False viz hcTime
+  writePropertyAndValue h "hc:private" (private b) ";" False
+  writeTags h (tags b)
+  if notes b == "" then
+      writePropertyAndValue h "hc:title" (title b) "." True
+  else do
+      writePropertyAndValue h "hc:title" (title b) ";" True
+      writePropertyAndValue h "hc:notes" (notes b) "." True
+  return ()
+
+writeTags :: Handle -> [Text] -> IO ()
+writeTags h ts = forM_ ts $ \t -> writePropertyAndValue h "hc:tag" t ";" True
+
+writePropertyAndValue :: Handle -> Text -> Text -> Text -> Bool -> IO ()
+writePropertyAndValue h p v sep b = do
+  hPutStr h "    "
+  hPutStr h (T.encodeUtf8 p)
+  hPutStr h " "
+  when b $ hPutStr h "\"";
+  hPutStr h (T.encodeUtf8 v);
+  when b $ hPutStr h "\""
+  hPutStr h " "
+  BS.hPutStrLn h (T.encodeUtf8 sep)
+
+------------------------------------------------------------------------------
+-- transformation/lint customized for HC
+
+hcDeliciousToRdf :: FilePath -> FilePath -> IO ()
+hcDeliciousToRdf = deliciousToRdf hcFilterBookmarks
+
+hcFilterBookmarks :: [Bookmark] -> [Bookmark]
+hcFilterBookmarks = CP.map f
+  where f b@Bookmark{..} = b { addDate = hcTime addDate
+                             , title   = hcLintTitle title
+                             , tags    = CP.map hcLintTag tags
+                             }
+
+hcTime :: Text -> Text
+hcTime x =
+  let fTime = formatTime
+                F.defaultTimeLocale
+                "%FT%T %Z"
+                $ posixSecondsToUTCTime
+                $ realToFrac
+                  (P.read (T.unpack x) :: Int)
+  -- TODO : This commented out line is a correct format for RDF dateTime.
+  --        But the RDF browser I am using has a bug.
+  --        So use the "incorrect" format to workaround bug for now.
+  -- in "\"" <> T.replace " UTC" "Z" (T.pack fTime) <> "\"" <>  "^^xsd:dateTime"
+  in "\"" <> T.pack fTime <> "\""
+
+-- some titles have " (meaning inches) in them
+hcLintTitle :: Text -> Text
+hcLintTitle = T.replace "\"" ""
+
+hcLintTag :: Text -> Text
+hcLintTag t =
+  case t of
     "401K"          -> "401k"
     "access_manager"-> "Sun_Access_Manager"
+    "adsense"       -> "AdSense"
     "aes"           -> "AES"
     "aeson"         -> "Aeson"
     "agda"          -> "Agda"
@@ -194,6 +218,7 @@ lintTag t =
     "awk"           -> "AWK"
     "backbone.js"   -> "Backbone.js"
     "bandcamp"      -> "Bandcamp"
+    "bash"          -> "BASH"
     "beamer"        -> "Beamer"
     "beanshell"     -> "BeanShell"
     "bible"         -> "Bible"
@@ -222,6 +247,7 @@ lintTag t =
     "cpntools"      -> "CpnTools"
     "css"           -> "CSS"
     "csv"           -> "CSV"
+    "curl"          -> "CURL"
     "datalet"       -> "datlet"
     "db"            -> "DB"
     "dbpedia"       -> "DBpedia"
@@ -241,20 +267,21 @@ lintTag t =
     "elisp"         -> "Elisp"
     "elm"           -> "Elm"
     "emacs"         -> "Emacs"
-    "spacemacs"     -> "Emacs_spacemacs"
     "create-emacs-mode"
-                    -> "emacs_create_a_mode"
+                    -> "Emacs_create_a_mode"
+    "eclim"         -> "Emacs_eclim"
     "impatient-mode"-> "Emacs_impatient-mode"
+    "magit"         -> "Emacs_Magit"
     "malabar-mode"  -> "Emacs_malabar-mode"
     "mode-line"     -> "Emacs_mode-line"
     "org"           -> "Emacs_org-mode"
     "org-mode"      -> "Emacs_org-mode"
     "org-plot"      -> "Emacs_org-plot"
     "org2blog"      -> "Emacs_org2blog"
+    "spacemacs"     -> "Emacs_spacemacs"
     "use-package"   -> "Emacs_use-package"
     "yasnippet"     -> "Emacs_yasnippet"
     "ebook"         -> "ebooks"
-    "eclim"         -> "Eclim"
     "edu"           -> "education"
     "ent"           -> "ENT"
     "erlang"        -> "Erlang"
@@ -277,10 +304,14 @@ lintTag t =
                     -> "Facebook_connect"
     "facebook_friend_inviter"
                     -> "Facebook_friend_inviter"
-    "fay"           -> "Fay"
+    "fake_book"     -> "jazz_fake_book"
     "fax"           -> "FAX"
     "firefox_extensions"
                     -> "Firefox_extensions"
+    "foldl"         -> "fold"
+    "fortress"      -> "Fortress"
+    "fpcomplete"    -> "FPComplete"
+    "freebase"      -> "Freebase"
     "frp"           -> "functional_reactive_programming"
     "gadt"          -> "GADT"
     "galaxy_nexus"  -> "Galaxy_Nexus"
@@ -317,10 +348,21 @@ lintTag t =
                     -> "Haskell_example"
     "haskell_extensions"
                     -> "Haskell_extensions"
+    "fay"           -> "Haskell_Fay"
+    "hoogle"        -> "Haskell_hoogle"
     "haddocks"      -> "Haskell_Haddocks"
+    "Hakyll"        -> "Haskell_Hakyll"
     "hakyll"        -> "Haskell_Hakyll"
+    "distributed_haskell"
+                    -> "Haskell_distributed"
+    "TypedHoles"    -> "Haskell_type_holes"
+    "type_classes"  -> "Haskell_type_class"
+    "typeclass"     -> "Haskell_type_class"
+    "type_class"    -> "Haskell_type_class"
+    "type_level"    -> "Haskell_type_level"
+    "type_family"   -> "Haskell_type_level"
     "haskell_job"   -> "Haskell_job"
-    "haskell_mode"  -> "Haskell_mode"
+    "haskell_mode"  -> "Haskell-mode"
     "haskell-mode"  -> "Haskell-mode"
     "haskell_pipes" -> "Haskell_pipes"
     "haskell_reflection"
@@ -331,18 +373,24 @@ lintTag t =
                     -> "Haskell_stack"
     "stackage"      -> "Haskell_stackage"
     "hackage"       -> "Haskell_hackage"
-    "doctest"       -> "Haskell_doctest"
-    "template_haskell" -> "Haskell_template"
+    "doctest"       -> "Haskell_testing"
+    "template_haskell"
+                    -> "Haskell_template"
     "cloud_haskell" -> "Haskell_Cloud"
     "liquid_haskell"-> "Haskell_Liquid"
-    "hspec"         -> "Haskell_Hspec"
-    "opaleye"       -> "Haskell_Opaleye"
-    "parsec"        -> "Haskell_Parsec"
+    "haxl"          -> "Haskell_Haxl"
+    "hspec"         -> "Haskell_testing"
+    "opaleye"       -> "Haskell_sql"
+    "parsec"        -> "Haskell_parsing"
+    "parser"        -> "Haskell_parsing"
     "reflex"        -> "Haskell_Reflex"
     "servant"       -> "Haskell_Servant"
     "shake"         -> "Haskell_Shake"
+    "STRef"         -> "Haskell_STRef"
     "shell-conduit" -> "Haskell_Shell-Conduit"
-    "tasty"         -> "Haskell_tasty"
+    "tasty"         -> "Haskell_testing"
+    "typeclassopedia"
+                    -> "Haskell_typeclassopedia"
     "yesod"         -> "Haskell_Yesod"
     "hawaii"        -> "Hawaii"
     "haxe"          -> "Haxe"
@@ -357,10 +405,12 @@ lintTag t =
     "ilc"           -> "Lisp_international_conference"
     "indigo"        -> "Indigo"
     "indo_european" -> "Indo-European"
+    "infocard"      -> "InfoCard"
     "infrarrealismo"-> "Infrarrealismo"
     "instagram"     -> "Instagram"
     "intellij"      -> "IntelliJ"
     "inter"         -> "interview_question"
+    "interv"        -> "interview"
     "ipad"          -> "iPad"
     "isabelle"      -> "Isabelle"
     "ispell"        -> "Ispell"
@@ -379,6 +429,9 @@ lintTag t =
     "javascript_MVC_framework"
                     -> "Javascript_MVC_framework"
     "javaslang"     -> "Javaslang"
+    "las_vegas_jazz"-> "jazz_Las_Vegas"
+    "jazz_san_francisco"
+                    -> "jazz_San_Francisco"
     "jdee"          -> "JDEE"
     "jet_lag"       -> "jetlag"
     "jini"          -> "Jini"
@@ -390,10 +443,13 @@ lintTag t =
     "kadena"        -> "Kadena"
     "kindle"        -> "Kindle"
     "knee"          -> "knees"
-    "kynetix"       -> "Kynetix"
+    "kynetx"        -> "Kynetx"
     "lambda_conf"   -> "LambdaConf"
     "latex"         -> "Latex"
     "latex_cv"      -> "Latex_cv"
+    "tex"           -> "Latex_Tex"
+    "tikz"          -> "Latex_TikZ"
+    "modernvm"      -> "Latex_cv"
     "ledger"        -> "Ledger"
     "lenses"        -> "lens"
     "linked_daa"    -> "linked_data"
@@ -406,7 +462,6 @@ lintTag t =
     "macbook"       -> "MacBook"
     "macbook_external_display"
                     -> "MacBook_external_display"
-    "magit"         -> "Magit"
     "mendeley"      -> "Mendeley"
     "microsoft"     -> "Microsoft"
     "midi"          -> "MIDI"
@@ -419,6 +474,7 @@ lintTag t =
     "musicbrainz"   -> "MusicBrainz"
     "myspace"       -> "MySpace"
     "myth"          -> "mythology"
+    "n3"            -> "RDF_N3"
     "neil_mitchell" -> "Neil_Mitchell"
     "neitzche"      -> "Friedrich_Nietzsche"
     "netbeans"      -> "NetBeans"
@@ -440,6 +496,7 @@ lintTag t =
     "pdf"           -> "PDF"
     "perl"          -> "Perl"
     "phonegap"      -> "PhoneGap"
+    "pi"            -> "Pi"
     "picasa"        -> "Picasa"
     "plantuml"      -> "PlantUML"
     "poetry_ma"     -> "poetry_magazine"
@@ -463,8 +520,9 @@ lintTag t =
     "raspberry_pi"  -> "Raspberry_Pi"
     "rdf"           -> "RDF"
     "rdf-sql-rest"  -> "RDF_SQL_REST"
-    "rdf-reification"
+    "rdf_reification"
                     -> "RDF_reification"
+    "triple_store"  -> "RDF_triple_store"
     "rdfs"          -> "RDFS"
     "rdma"          -> "RDMA"
     "redex"         -> "Redex"
@@ -474,18 +532,21 @@ lintTag t =
     "reveal.js"     -> "Reveal.js"
     "roku"          -> "Roku"
     "ruby"          -> "Ruby"
+    "s3"            -> "S3"
     "safari"        -> "Safari"
     "samba"         -> "Samba"
     "sapolsky"      -> "Sapolsky"
     "sawsdl"        -> "SAWSDL"
     "scala"         -> "Scala"
     "scalaz"        -> "ScalaZ"
+    "shapeless"     -> "Scala_Shapeless"
     "scheme"        -> "Scheme"
+    "sealevel"      -> "sea_level"
     "secondlife"    -> "Second Life"
     "sed"           -> "SED"
     "sench"         -> "Sencha"
     "sencha"        -> "Sencha"
-    "sench_touch"   -> "Sencha"
+    "sencha_touch"  -> "Sencha"
     "sibelius"      -> "Sibelius"
     "sicp"          -> "SICP"
     "simile"        -> "Simile"
@@ -494,31 +555,37 @@ lintTag t =
     "skills_matter" -> "Skill_Matter"
     "skype"         -> "Skype"
     "slime"         -> "Slime"
+    "slimserver"    -> "SlimServer"
     "smalltalk"     -> "Smalltalk"
     "softw"         -> "software"
     "spanish"       -> "Spanish"
     "sparql"        -> "Sparql"
     "spine.js"      -> "Spine.js"
+    "squeak"        -> "Squeak"
     "sql"           -> "SQL"
     "ssh"           -> "SSH"
+    "sshuttle"      -> "SSHuttle"
+    "sswap"         -> "SSWAP"
     "standard_ml"   -> "ML"
     "strange_loop"  -> "Strange_Loop"
+    "strongtalk"    -> "StrongTalk"
+    "stonehenge"    -> "Stonehenge"
     "subversion"    -> "Subversion"
+    "summer_jazz"   -> "jazz_summer"
     "suni"          -> "Suni"
+    "sweet_tools"   -> "Sweet_Tools"
     "swift"         -> "Swift"
     "tapestry"      -> "Tapestry"
     "telegram"      -> "Telegram"
     "telehash"      -> "Telehash"
-    "tex"           -> "Tex"
-    "tikz"          -> "TikZ"
     "tla"           -> "TLA"
+    "traceroute"    -> "Traceroute"
     "tracking_"     -> "tracking"
     "travis_ci"     -> "Travis_ci"
     "truecrypt"     -> "Truecrypt"
     "tv"            -> "TV"
     "twine"         -> "Twine"
     "twitter"       -> "Twitter"
-    "TypedHoles"    -> "typed_holes"
     "ulix"          -> "Ulix"
     "unison"        -> "Unison"
     "unix"          -> "Unix"
@@ -526,14 +593,19 @@ lintTag t =
     "utah"          -> "Utah"
     "virtualbox"    -> "VirtualBox"
     "virtuoso"      -> "Virtuoso"
+    "visual"        -> "visualization"
     "vpn"           -> "VPN"
     "webdesign"     -> "web_design"
+    "wikimedia"     -> "Wikimedia"
     "wikipedia"     -> "Wikipedia"
     "windows"       -> "Windows"
     "windows_xp_recovery"
                     -> "Windows_xp_recovery"
+    "win98"         -> "Windows_98"
     "wired_magazine"-> "Wired_magazine"
     "wireshark"     -> "Wireshark"
+    "wordnet"       -> "WordNet"
+    "wordpress"     -> "WordPress"
     "xmission"      -> "XMission"
     "xmonad"        -> "XMonad"
     "xquery"        -> "XQuery"
