@@ -1,9 +1,34 @@
-Transforms [[delicious.com]] bookmarks into RDF triples.
+** Transforms [[delicious.com]] bookmarks into RDF triples.
 
-In progress.
+*Known limitations*
 
-Currently it parses and writes RDF.
+- Only uses one "fake" namespace.
+- Does not handle multi-line notes in =<DD>=
 
-Current limitations:
-- Only uses one fake namespace.
-- Writes out unicode as escaped - which fuseki will not read.
+*Usage*
+
+#+begin_example
+stack exec delicious-bookmarks-to-rdf <input filepathname> <output filepathname>
+#+end_example
+
+or in the REPL
+
+#+begin_example
+stack repl
+
+λ: parseDelicious "test/test-data/delicious-2017-07-14.html"
+
+λ: hcDeliciousToRdf "test/test-data/delicious-2017-07-14.html" "/tmp/delicious-2017-07-14.ttl"
+#+end_example
+
+Writes RDF triples in [[https://www.w3.org/TR/turtle/][RDF Turtle]] format.  To transform to other formats use something like
+- [[http://www.l3s.de/~minack/rdf2rdf/]]
+- [[http://www.easyrdf.org/converter]]
+
+*Customization*
+
+=app/Main/hs= uses =src/ParseDelicious/hcFilterBookmarks=.  That function is customized to clean up /my/ bookmarks.  Fork and replace with your own.
+
+Also, fork and use the parser to get a =[Bookmark]= then transform to any (non-)RDF format or your choice.
+
+

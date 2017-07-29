@@ -2,13 +2,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
-module Lib where
+module DeliciousToRdf where
 
--- does not handle multi-line notes in <DD>
+-- NOTE: does not handle multi-line notes in <DD>
 
 {-
 parseDelicious "test/test-data/delicious-2017-07-14.html"
-deliciousToRdf "test/test-data/delicious-2017-07-14.html" "/tmp/delicious-2017-07-14.ttl"
+hcDeliciousToRdf "test/test-data/delicious-2017-07-14.html" "/tmp/delicious-2017-07-14.ttl"
 -}
 
 import           ClassyPrelude         as CP hiding (many, try, (<|>))

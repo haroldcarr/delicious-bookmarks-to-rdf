@@ -1,6 +1,6 @@
 module Main where
 
-import           Lib
+import           DeliciousToRdf
 import           System.Environment (getArgs)
 
 main :: IO ()

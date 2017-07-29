@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import           ClassyPrelude
-import           Lib
+import           DeliciousToRdf
 
 testDataDir :: String
 testDataDir = "test/test-data/"
